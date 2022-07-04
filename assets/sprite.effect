@@ -1,0 +1,126 @@
+// Copyright (c) 2017-2020 Xiamen Yaji Software Co., Ltd.
+CCEffect %{
+  techniques:
+  - passes:
+    - vert: sprite-vs:vert
+      frag: sprite-fs:frag
+      depthStencilState:
+        depthTest: false
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+          blendDstAlpha: one_minus_src_alpha
+      rasterizerState:
+        cullMode: none
+      properties:
+        alphaThreshold: { value: 0.5 }
+        A: {value: [0,1,2,0], editor: { parent: USE_SECOND_TEXTURE } }
+        B: { value: 0.5, editor: {visible: false} }
+        C: { value: 0.5, editor: {displayname: TestC}}
+        D: { value: 0.5,target: testD.x}
+        E: { value: [1,1,1,1],editor: {type: color}}
+        F: { value: 0.5,editor: {tooltip: "Tis is Test"}}
+        G: { value: 0.5,editor: {range: [0,10,1]}}
+        H: { value: 0.5,editor: {min: 0,max: 10,step: 1,slide: true}}
+        I: { value: red}
+}%
+
+CCProgram sprite-vs %{
+  precision highp float;
+  #include <cc-global>
+  #if USE_LOCAL
+    #include <cc-local>
+  #endif
+  #if SAMPLE_FROM_RT
+    #include <common>
+  #endif
+  in vec3 a_position;
+  in vec2 a_texCoord;
+  in vec4 a_color;
+
+  out vec4 color;
+  out vec2 uv0;
+
+  uniform Params {
+    vec4 A;
+    float B;
+    float C;
+    vec2 testD;
+    vec4 E;
+    float F;
+    float G;
+    float H;
+  };
+
+  #if USE_SECOND_TEXTURE
+    uniform sampler2D I;
+  #endif
+
+  vec4 vert () {
+    vec4 pos = vec4(a_position, 1);
+    // 由用户决定是否由GPU计算世界坐标(sprite，label默认使用GPR计算世界坐标)
+    #if USE_LOCAL
+      pos = cc_matWorld * pos;
+    #endif
+
+    // 用于像素对齐(避免像素抖动)
+    #if USE_PIXEL_ALIGNMENT
+      pos = cc_matView * pos;
+      pos.xyz = floor(pos.xyz);
+      pos = cc_matProj * pos;
+    #else
+      pos = cc_matViewProj * pos;
+    #endif
+
+    uv0 = a_texCoord;
+    #if SAMPLE_FROM_RT
+      CC_HANDLE_RT_SAMPLE_FLIP(uv0);
+    #endif
+    color = a_color;
+
+    return pos;
+  }
+}%
+
+CCProgram sprite-fs %{
+  precision highp float;
+  #include <embedded-alpha>
+  #include <alpha-test>
+
+  in vec4 color;
+
+  //Cocos Creator引擎底层内置有2部分内存数据结构，一个CCLocal，一个CCGlobal 
+  #if USE_TEXTURE
+    in vec2 uv0;
+    // 申请CCLocal内存
+    #pragma builtin(local)
+    // 布局限定符制定(用于顶点属性内存分配,代表绑定到CCLocal内存指定位置，layout比以下方式优先级更高)
+    /**
+    *  const uvAttributeLocation = gl.getAttribLocation(program,"a_uv");
+      // 激活属性
+      gl.enableVertexAttribArray(uvAttributeLocation);
+      gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer);
+      gl.vertexAttribPointer(uvAttributeLocation,2,gl.FLOAT,false,16,8);
+    */
+    layout(set = 2, binding = 11) uniform sampler2D cc_spriteTexture;
+  #endif
+
+  vec4 frag () {
+    vec4 o = vec4(1, 1, 1, 1);
+
+    #if USE_TEXTURE
+      o *= CCSampleWithAlphaSeparated(cc_spriteTexture, uv0);
+      #if IS_GRAY
+        float gray  = 0.2126 * o.r + 0.7152 * o.g + 0.0722 * o.b;
+        o.r = o.g = o.b = gray;
+      #endif
+    #endif
+
+    o *= color;
+    ALPHA_TEST(o);
+    return o;
+  }
+}%
